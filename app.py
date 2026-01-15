@@ -503,7 +503,7 @@ PETUGAS_HTML = BASE_HEAD + r"""
     </main>
 
     <!-- Bottom Navigation -->
-    <nav class="fixed bottom-0 inset-x-0 z-40 border-t border-slate-800 bg-slate-950/90 backdrop-blur">
+    <!--nav class="fixed bottom-0 inset-x-0 z-40 border-t border-slate-800 bg-slate-950/90 backdrop-blur">
       <div class="mx-auto max-w-5xl px-4 py-2">
         <div class="grid grid-cols-3 gap-2">
           <button type="button" onclick="showTab('tab-unpaid')"
@@ -523,7 +523,7 @@ PETUGAS_HTML = BASE_HEAD + r"""
           </button>
         </div>
       </div>
-    </nav>
+    </nav-->
 
   </div>
 </div>
