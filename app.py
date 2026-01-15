@@ -1,6 +1,7 @@
 from flask import Flask, g, request, redirect, url_for, render_template_string, abort
 import sqlite3
 from datetime import date
+from collections import OrderedDict
 
 app = Flask(__name__)
 DB_PATH = "wifi.db"
@@ -143,8 +144,10 @@ BASE_FOOT = """
 
 PETUGAS_HTML = BASE_HEAD + r"""
 <style>
-  /* minor: improve tap highlight on mobile */
+  /* minor: improve tap highlight on mobile */  
   * { -webkit-tap-highlight-color: transparent; }
+  summary { list-style: none; }
+  summary::-webkit-details-marker { display: none; }
 </style>
 
 <div class="min-h-screen bg-slate-950 text-slate-100">
@@ -329,64 +332,98 @@ PETUGAS_HTML = BASE_HEAD + r"""
             </div>
           </div>
 
-          <div class="mt-4 divide-y divide-slate-800">
-            {% for m in marked_today %}
-            <div class="py-3">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="truncate text-base font-black text-slate-50">{{m.customer_id}} • {{m.name}}</div>
-                  <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                    <span class="rounded-full bg-slate-950 px-2 py-1 font-semibold border border-slate-800">⏱️ {{m.paid_at}}</span>
-                    {% if m.method == 'CASH' %}
-                      <span class="rounded-full bg-amber-500/15 px-2 py-1 font-black text-amber-200 border border-amber-500/25">💵 CASH</span>
-                      {% if m.cash_batch_id %}
-                        <span class="rounded-full bg-slate-950 px-2 py-1 font-semibold border border-slate-800">📤 Sudah kirim</span>
-                      {% else %}
-                        <span class="rounded-full bg-slate-950 px-2 py-1 font-semibold border border-slate-800">🧺 Belum kirim</span>
-                      {% endif %}
-                    {% else %}
-                      <span class="rounded-full bg-emerald-500/15 px-2 py-1 font-black text-emerald-200 border border-emerald-500/25">🏦 TRANSFER</span>
-                      <span class="rounded-full bg-slate-950 px-2 py-1 font-semibold border border-slate-800">✅ Auto valid</span>
-                    {% endif %}
-                  </div>
-                </div>
-                <div class="shrink-0 text-right">
-                  <div class="text-base font-black text-slate-50">{{m.amount_fmt}}</div>
-                </div>
-              </div>
+          <!-- Grouped transactions by date (batch_date fallback paid_at date) -->
+<div class="mt-4 grid gap-3">
+  {% for g in tx_groups %}
+  <details class="rounded-2xl border border-slate-800 bg-slate-950 p-3"
+           {% if g.is_today %}open{% endif %}>
+    <summary class="flex items-center justify-between gap-3 cursor-pointer select-none">
+      <div class="min-w-0">
+        <div class="font-black text-slate-50">📅 {{g.date}}</div>
+        <div class="mt-1 text-xs text-slate-400">
+          {% if g.is_today %}
+            🟢 Hari ini • terbuka otomatis
+          {% else %}
+            🗂️ Riwayat • tap untuk buka
+          {% endif %}
+        </div>
+      </div>
 
-              <div class="mt-3 flex flex-wrap gap-2">
-                <a class="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-black text-slate-100 active:scale-[0.99]"
-                   href="/receipt/{{m.id}}?back={{back_url | urlencode}}">
-                  🧾 Print
-                </a>
+      <div class="shrink-0 text-right">
+        <div class="text-sm font-black text-slate-200">{{g.total_cnt}} transaksi</div>
+        <div class="text-sm font-black text-slate-50">{{g.total_sum_fmt}}</div>
+        <div class="mt-1 text-xs text-slate-400">
+          💵 {{g.cash_cnt}} • {{g.cash_sum_fmt}} &nbsp;|&nbsp; 🏦 {{g.tr_cnt}} • {{g.tr_sum_fmt}}
+        </div>
+      </div>
+    </summary>
 
-                {% if m.can_undo %}
-                <form method="post" action="/undo" onsubmit="return confirm('Batalkan pembayaran ini?')">
-                  <input type="hidden" name="period" value="{{period}}">
-                  <input type="hidden" name="collector" value="{{collector}}">
-                  <input type="hidden" name="invoice_id" value="{{m.id}}">
-                  <button class="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-black text-white active:scale-[0.99]">
-                    🧨 Batalkan
-                  </button>
-                </form>
+    <div class="mt-3 divide-y divide-slate-800">
+      {% for m in g['items'] %}
+      <div class="py-3">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="truncate text-base font-black text-slate-50">{{m.customer_id}} • {{m.name}}</div>
+            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+              <span class="rounded-full bg-slate-900 px-2 py-1 font-semibold border border-slate-800">⏱️ {{m.paid_at}}</span>
+
+              {% if m.method == 'CASH' %}
+                <span class="rounded-full bg-amber-500/15 px-2 py-1 font-black text-amber-200 border border-amber-500/25">💵 CASH</span>
+                {% if m.cash_batch_id %}
+                  <span class="rounded-full bg-slate-900 px-2 py-1 font-semibold border border-slate-800">
+                    🧺 Batch #{{m.cash_batch_id}}{% if m.batch_status %} • {{m.batch_status}}{% endif %}
+                  </span>
                 {% else %}
-                <button class="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm font-black text-slate-500" disabled>
-                  🔒 Terkunci
-                </button>
+                  <span class="rounded-full bg-slate-900 px-2 py-1 font-semibold border border-slate-800">🧺 Belum batch</span>
                 {% endif %}
-              </div>
+              {% else %}
+                <span class="rounded-full bg-emerald-500/15 px-2 py-1 font-black text-emerald-200 border border-emerald-500/25">🏦 TRANSFER</span>
+                <span class="rounded-full bg-slate-900 px-2 py-1 font-semibold border border-slate-800">✅ Auto valid</span>
+              {% endif %}
             </div>
-            {% endfor %}
-
-            {% if marked_today|length == 0 %}
-            <div class="py-10 text-center">
-              <div class="text-3xl">🕊️</div>
-              <div class="mt-2 text-base font-black">Belum ada transaksi hari ini</div>
-              <div class="mt-1 text-sm text-slate-300">Mulai dari tab 🟠 Belum.</div>
-            </div>
-            {% endif %}
           </div>
+
+          <div class="shrink-0 text-right">
+            <div class="text-base font-black text-slate-50">{{m.amount_fmt}}</div>
+          </div>
+        </div>
+
+        <div class="mt-3 flex flex-wrap gap-2">
+          <a class="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm font-black text-slate-100 active:scale-[0.99]"
+             href="/receipt/{{m.id}}?back={{back_url | urlencode}}">
+            🧾 Print
+          </a>
+
+          {% if m.can_undo %}
+          <form method="post" action="/undo" onsubmit="return confirm('Batalkan pembayaran ini?')">
+            <input type="hidden" name="period" value="{{period}}">
+            <input type="hidden" name="collector" value="{{collector}}">
+            <input type="hidden" name="invoice_id" value="{{m.id}}">
+            <button class="inline-flex items-center justify-center gap-2 rounded-2xl bg-rose-600 px-4 py-3 text-sm font-black text-white active:scale-[0.99]">
+              🧨 Batalkan
+            </button>
+          </form>
+          {% else %}
+          <button class="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm font-black text-slate-500" disabled>
+            🔒 Terkunci
+          </button>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+
+  {% if tx_groups|length == 0 %}
+  <div class="py-10 text-center rounded-2xl border border-slate-800 bg-slate-950">
+    <div class="text-3xl">🕊️</div>
+    <div class="mt-2 text-base font-black">Belum ada transaksi</div>
+    <div class="mt-1 text-sm text-slate-300">Mulai dari tab 🟠 Belum.</div>
+  </div>
+  {% endif %}
+</div>
+
         </div>
       </section>
 
@@ -977,12 +1014,16 @@ def setup():
 # =========================
 # Routes: Petugas
 # =========================
+    
 @app.get("/")
 def petugas():
     period = request.args.get("period") or today_ym()
     collector = request.args.get("collector") or "Petugas"
     q = (request.args.get("q") or "").strip()
     msg = request.args.get("msg") or ""
+
+    # IMPORTANT: dipakai di banyak tempat (grouping + batch status)
+    today = today_ymd()
 
     ensure_invoices(period)
 
@@ -1021,13 +1062,67 @@ def petugas():
     marked_today = []
     for m in marked:
         mm = dict(m)
-        mm["amount_fmt"] = money(m["amount"])
+        mm["amount_fmt"] = money(mm["amount"])
         can_undo = (mm["locked"] == 0) and (
             (mm["method"] == "TRANSFER") or
             (mm["method"] == "CASH" and mm["cash_batch_id"] is None)
         )
         mm["can_undo"] = can_undo
         marked_today.append(mm)
+
+    # ---------- Marked GROUPED by batch_date (fallback paid_at date) ----------
+    marked_all = query("""
+      SELECT
+        i.id, i.customer_id, c.name, i.amount, i.paid_at, i.method, i.cash_batch_id, i.locked,
+        COALESCE(cb.batch_date, date(i.paid_at,'localtime')) AS group_date,
+        cb.status AS batch_status
+      FROM invoices i
+      JOIN customers c ON c.id = i.customer_id
+      LEFT JOIN cash_batches cb ON cb.id = i.cash_batch_id
+      WHERE i.period = ?
+        AND i.status = 'PAID'
+        AND i.collector = ?
+      ORDER BY group_date DESC, i.paid_at DESC
+    """, (period, collector))
+
+    groups = OrderedDict()
+    for m in marked_all:
+        mm = dict(m)
+        mm["amount_fmt"] = money(mm["amount"])
+
+        can_undo = (mm["locked"] == 0) and (
+            (mm["method"] == "TRANSFER") or
+            (mm["method"] == "CASH" and mm["cash_batch_id"] is None)
+        )
+        mm["can_undo"] = can_undo
+
+        gd = mm.get("group_date")  # string YYYY-MM-DD
+        if gd not in groups:
+            groups[gd] = {
+                "date": gd,
+                "is_today": (gd == today),
+                "cash_cnt": 0, "cash_sum": 0,
+                "tr_cnt": 0, "tr_sum": 0,
+                "items": []
+            }
+
+        if mm["method"] == "CASH":
+            groups[gd]["cash_cnt"] += 1
+            groups[gd]["cash_sum"] += int(mm["amount"] or 0)
+        else:
+            groups[gd]["tr_cnt"] += 1
+            groups[gd]["tr_sum"] += int(mm["amount"] or 0)
+
+        groups[gd]["items"].append(mm)
+
+    tx_groups = list(groups.values())  # ✅ wajib list, jangan .values tanpa ()
+
+    for g in tx_groups:
+        g["total_cnt"] = g["cash_cnt"] + g["tr_cnt"]
+        g["total_sum"] = g["cash_sum"] + g["tr_sum"]
+        g["cash_sum_fmt"] = money(g["cash_sum"])
+        g["tr_sum_fmt"] = money(g["tr_sum"])
+        g["total_sum_fmt"] = money(g["total_sum"])
 
     # ---------- CASH pending TODAY (for batch) localtime ----------
     cash_today = query_one("""
@@ -1041,12 +1136,12 @@ def petugas():
         AND collector = ?
         AND date(paid_at,'localtime') = date('now','localtime')
     """, (period, collector))
-    cash_today_count = int(cash_today["jumlah"] or 0)
-    cash_today_total = money(cash_today["total"] or 0)
+
+    cash_today_count = int(cash_today["jumlah"] if cash_today else 0)
+    cash_today_total = money(cash_today["total"] if cash_today else 0)
+
 
     # ---------- Batch status TODAY (PENDING / APPROVED) ----------
-    today = today_ymd()
-
     pending_batch = query_one("""
       SELECT id, count, total_cash
       FROM cash_batches
@@ -1066,12 +1161,18 @@ def petugas():
     cash_batch_pending_id = pending_batch["id"] if pending_batch else None
     cash_batch_pending_meta = None
     if pending_batch:
-        cash_batch_pending_meta = f"🟡 PENDING • Tarikan #{pending_batch['id']} • {pending_batch['count']} org • {money(pending_batch['total_cash'])}"
+        cash_batch_pending_meta = (
+            f"🟡 PENDING • Tarikan #{pending_batch['id']} • "
+            f"{pending_batch['count']} org • {money(pending_batch['total_cash'])}"
+        )
 
     cash_batch_approved_id = approved_batch["id"] if approved_batch else None
     cash_batch_approved_meta = None
     if approved_batch:
-        cash_batch_approved_meta = f"✅ APPROVED • Tarikan #{approved_batch['id']} • {approved_batch['count']} org • {money(approved_batch['total_cash'])}"
+        cash_batch_approved_meta = (
+            f"✅ APPROVED • Tarikan #{approved_batch['id']} • "
+            f"{approved_batch['count']} org • {money(approved_batch['total_cash'])}"
+        )
 
     back_url = f"/?period={period}&collector={collector}"
 
@@ -1083,14 +1184,19 @@ def petugas():
         q=q,
         msg=msg,
         rows=rows,
+
+        # tab "hari ini" lama (ringkasan hari ini masih pakai ini)
         marked_today=marked_today,
+
+        # tab "hari ini" baru: list grouped by batch_date (fallback)
+        tx_groups=tx_groups,
+
         cash_today_count=cash_today_count,
         cash_today_total=cash_today_total,
         today=today,
         back_url=back_url,
         money=money,
 
-        # tambahan untuk UX "Setoran" yang jelas
         cash_batch_pending_id=cash_batch_pending_id,
         cash_batch_pending_meta=cash_batch_pending_meta,
         cash_batch_approved_id=cash_batch_approved_id,
