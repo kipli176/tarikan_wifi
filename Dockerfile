@@ -18,8 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# jika kamu pakai .env di container (opsional)
-COPY .env .env
+# jika kamu pakai .env di container (opsional) 
 
 EXPOSE 5500
 
